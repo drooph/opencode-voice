@@ -2,7 +2,7 @@ import { tool, type Plugin } from "@opencode-ai/plugin";
 import { readFileSync, writeFileSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 
 /**
  * Voice ID for ElevenLabs TTS
@@ -57,6 +57,105 @@ function playAudio(filePath: string, volume: number): void {
       // Ignore cleanup errors
     }
   });
+}
+
+/**
+ * Strip audio tags from text (e.g., [laughs], [excited], etc.)
+ * These tags are only supported by ElevenLabs v3
+ */
+function stripAudioTags(text: string): string {
+  return text.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Validate voice name to prevent command injection
+ * Only allows alphanumeric characters, spaces, hyphens, and parentheses
+ */
+function isValidVoiceName(voice: string): boolean {
+  // Voice names like "Alex", "Samantha", "Daniel", "Fiona", "Moira", etc.
+  // Also allow names with spaces like "Good News", "Bad News"
+  return /^[a-zA-Z0-9\s\-()]+$/.test(voice) && voice.length <= 50;
+}
+
+/**
+ * Sanitize text to remove potential shell metacharacters
+ * While spawn() with array args is safe, this provides defense in depth
+ */
+function sanitizeText(text: string): string {
+  // Remove null bytes and control characters (except newlines, tabs)
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+/**
+ * Get the current system output volume (0-100).
+ * Returns 50 (non-zero default) if unable to determine.
+ */
+function getSystemVolume(): number {
+  try {
+    const result = spawnSync("osascript", ["-e", "output volume of (get volume settings)"], {
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const vol = parseInt(result.stdout?.toString().trim() || "", 10);
+    return isNaN(vol) ? 50 : vol;
+  } catch {
+    return 50;
+  }
+}
+
+/**
+ * Display a macOS notification via osascript (non-blocking).
+ * Uses argv passing to prevent AppleScript injection.
+ */
+function notifyWithOsascript(text: string): void {
+  const child = spawn("osascript", [
+    "-e", "on run argv",
+    "-e", 'display notification (item 1 of argv) with title "Speak"',
+    "-e", "end run",
+    "--", text,
+  ], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+/**
+ * Speak text using macOS say command (non-blocking fallback).
+ * Falls back to a notification if system volume is zero.
+ * Returns true if notification was used instead of speech.
+ */
+function speakWithSay(
+  text: string,
+  _volume: number,
+  voice?: string
+): boolean {
+  const cleanText = stripAudioTags(text);
+  const safeText = sanitizeText(cleanText);
+
+  if (getSystemVolume() === 0) {
+    notifyWithOsascript(safeText);
+    return true;
+  }
+
+  let safeVoice: string | undefined;
+  if (voice) {
+    if (isValidVoiceName(voice)) {
+      safeVoice = voice;
+    } else {
+      console.warn(`Invalid voice name rejected: ${voice}`);
+      safeVoice = undefined;
+    }
+  }
+
+  const args = safeVoice ? ["-v", safeVoice, safeText] : [safeText];
+  const child = spawn("say", args, {
+    detached: true,
+    stdio: "ignore",
+    shell: false,
+  });
+  child.unref();
+  return false;
 }
 
 /**
@@ -148,6 +247,28 @@ USAGE GUIDANCE:
 
     // Load API key from secrets file
     const apiKey = loadApiKey();
+
+    // If no API key, fall back to macOS say command or notification
+    if (!apiKey) {
+      const fallbackVoice = loadFallbackVoice();
+      const usedNotification = speakWithSay(text, volume, fallbackVoice || undefined);
+
+      const preview =
+        text.length > 80 ? text.substring(0, 80) + "..." : text;
+
+      if (usedNotification) {
+        return `<speak_started>
+Displayed notification (volume is muted): "${preview}"
+Note: Using notification fallback (volume is 0, ElevenLabs API key not found)
+</speak_started>`;
+      }
+
+      const voiceInfo = fallbackVoice ? ` (voice: ${fallbackVoice})` : "";
+      return `<speak_started>
+Playing speech with macOS say${voiceInfo} (non-blocking): "${preview}"
+Note: Using fallback TTS (ElevenLabs API key not found)
+</speak_started>`;
+    }
 
     // Call ElevenLabs v3 API
     const response = await fetch(
