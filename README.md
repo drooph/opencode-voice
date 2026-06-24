@@ -2,8 +2,6 @@
 
 An [OpenCode](https://opencode.ai) plugin that adds text-to-speech capabilities to your agent. Works out of the box on macOS — **no API keys, no accounts, no billing, no configuration required**.
 
-https://x.com/placeholder-demo-link
-
 ## What's Changed
 
 **macOS `say` is now the default engine — zero config required**
@@ -30,11 +28,7 @@ The plugin has been updated to work immediately after install with no external d
 
 ## Quick Install
 
-Run this one-liner:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/anomalyco/opencode-voice/main/setup.sh | bash
-```
+Run the setup.sh script to install! Easy as that.
 
 The setup script will:
 - Clone the plugin to `~/dev/opencode-voice`
@@ -50,7 +44,7 @@ No API key prompt required. Restart OpenCode and use `speak()` right away.
 
 1. Clone plugin:
 ```bash
-git clone https://github.com/anomalyco/opencode-voice.git ~/dev/opencode-voice
+git clone https://github.com/drooph/opencode-voice.git ~/dev/opencode-voice
 cd ~/dev/opencode-voice
 bun install
 ```
